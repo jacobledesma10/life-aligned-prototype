@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+*.zip
+.venv/
+venv/
+.env
+
+# Model artifact (optional: remove *.zip above if you want to track it)
+# soil_regen_agent.zip
