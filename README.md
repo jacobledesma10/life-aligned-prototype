@@ -35,7 +35,7 @@ This mirrors biological nervous systems:
 • Actions are gated  
 • Feedback updates future behavior
 
-### 🔬 Design Principles
+## 🔬 Design Principles
 
 This system is built around:
 
