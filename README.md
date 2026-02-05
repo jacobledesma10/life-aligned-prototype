@@ -35,37 +35,6 @@ This mirrors biological nervous systems:
 • Actions are gated  
 • Feedback updates future behavior
 
-## 📁 Repository Structure
-├── README.md
-├── requirements.txt
-├── data/
-│   ├── raw/
-│   │   └── soil_data.csv
-│   └── mock/
-│       └── synthetic_soil_timeseries.csv
-├── notebooks/
-│   └── 01_explore_soil_data.ipynb
-├── src/
-│   ├── ingestion/
-│   │   └── load_soil_data.py
-│   ├── perception/
-│   │   └── reservoir_encoder.py
-│   ├── integration/
-│   │   └── state_memory.py
-│   ├── gating/
-│   │   └── action_potential_gate.py
-│   ├── action/
-│   │   ├── soil_env.py
-│   │   ├── train_rl.py
-│   │   └── rl_policy.py
-│   ├── feedback/
-│   │   └── feedback_loop.py
-│   └── main.py
-└── configs/
-    └── system_config.yaml
-
----
-
 ### 🔬 Design Principles
 
 This system is built around:
