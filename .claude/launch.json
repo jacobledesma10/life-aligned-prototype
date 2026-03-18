@@ -1,0 +1,24 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "Main Pipeline",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["src/main.py"],
+      "port": 0
+    },
+    {
+      "name": "Train RL Policy",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["src/action/train_rl.py"],
+      "port": 0,
+      "autoPort": true
+    },
+    {
+      "name": "Generate Synthetic Soil Data",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["data/mock/synthetic_soil_timeseries.py"],
+      "port": 0
+    }
+  ]
+}
