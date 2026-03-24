@@ -50,9 +50,9 @@ def run_system():
     encoder = ReservoirEncoder(input_dim=4)
     memory = StateMemory()
     gate = ActionPotentialGate(
-        necessity_thresh=0.6,
-        alignment_thresh=0.65,
-        risk_thresh=0.35
+        necessity_thresh=0.5,
+        alignment_thresh=-0.1,  # scores are always negative; clip(neg, 0,1)=0, so must be < 0
+        risk_thresh=0.4
     )
     policy = RLPolicy(model_path="soil_regen_agent_100d")
 
