@@ -76,6 +76,38 @@ class WorldModel:
         self.net.eval()
         self.trained = True
 
+    def train_on_transitions(self, transitions: list, epochs: int = 200, lr: float = 1e-3) -> None:
+        """Train from scratch on a pre-built list of (state, action, next_state) tuples.
+
+        Supports any mix of actions — use this instead of train_on_data() when
+        labeled multi-action transitions are available.
+        """
+        inputs  = torch.stack([self._encode(s, a) for s, a, _ in transitions])
+        targets = torch.tensor(np.array([ns for _, _, ns in transitions], dtype=np.float32))
+
+        split = int(len(inputs) * 0.8)
+        X_train, X_val = inputs[:split], inputs[split:]
+        y_train, y_val = targets[:split], targets[split:]
+
+        optimizer = torch.optim.Adam(self.net.parameters(), lr=lr)
+        loss_fn = nn.MSELoss()
+
+        self.net.train()
+        for epoch in range(1, epochs + 1):
+            optimizer.zero_grad()
+            loss = loss_fn(self.net(X_train), y_train)
+            loss.backward()
+            optimizer.step()
+            if epoch % 50 == 0:
+                self.net.eval()
+                with torch.no_grad():
+                    val_loss = loss_fn(self.net(X_val), y_val).item()
+                self.net.train()
+                print(f"  Epoch {epoch:3d} | train_mse={loss.item():.5f} | val_mse={val_loss:.5f}")
+
+        self.net.eval()
+        self.trained = True
+
     def fine_tune(self, transitions: list, epochs: int = 20, lr: float = 1e-3) -> None:
         """Fine-tune on real (state, action, next_state) observations."""
         if not transitions:
