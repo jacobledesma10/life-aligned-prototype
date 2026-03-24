@@ -64,9 +64,9 @@ def _gate_inputs_from_scores(scores, best_action):
 
 def _plot_results(records, out_path):
     timestamps  = [r["ts"] for r in records]
-    xs          = range(len(timestamps))
+    xs          = list(range(len(timestamps)))
     tick_step   = max(1, len(timestamps) // 8)
-    tick_xs     = list(xs)[::tick_step]
+    tick_xs     = xs[::tick_step]
     tick_labels = [timestamps[i] for i in tick_xs]
 
     sensors = [
@@ -76,54 +76,74 @@ def _plot_results(records, out_path):
         ("temperature",   "Temperature °C", "#B71C1C"),
     ]
 
-    fig, axes = plt.subplots(len(sensors) + 1, 1, figsize=(14, 13), sharex=True)
-    fig.suptitle("Regenerative AI MVP — Run Results", fontsize=14, fontweight="bold", y=0.98)
+    fig, axes = plt.subplots(len(sensors) + 1, 1, figsize=(16, 15), sharex=True)
+    fig.suptitle("Regenerative AI MVP — Run Results", fontsize=16, fontweight="bold", y=0.99)
+
+    action_records = [r for r in records if r["event"] == "action" and r["action"] in _ACTION_COLOR]
+    warn_records   = [r for r in records if r["event"] == "warn"]
 
     # --- Sensor panels ---
     for ax, (key, title, color) in zip(axes[:-1], sensors):
         vals = [r[key] for r in records]
-        ax.plot(xs, vals, color=color, linewidth=1.2, label=title)
-        ax.set_ylabel(title, fontsize=8)
+        ax.plot(xs, vals, color=color, linewidth=1.4, label=title)
+        ax.set_ylabel(title, fontsize=11)
+        ax.tick_params(axis="y", labelsize=10)
         ax.grid(True, alpha=0.3)
 
-        # Overlay triggered action markers
-        for r in records:
-            if r["event"] == "action" and r["action"] in _ACTION_COLOR:
-                ax.axvline(r["step"], color=_ACTION_COLOR[r["action"]], alpha=0.25, linewidth=1)
-            elif r["event"] == "warn":
-                ax.axvline(r["step"], color="#FFC107", alpha=0.3, linewidth=1)
+        # Triggered action markers — vertical lines
+        for r in action_records:
+            ax.axvline(r["step"], color=_ACTION_COLOR[r["action"]], alpha=0.45, linewidth=1.5)
+        for r in warn_records:
+            ax.axvline(r["step"], color="#FFC107", alpha=0.4, linewidth=1.5)
+
+        # Diamond markers at the sensor value for each triggered action
+        for r in action_records:
+            ax.plot(r["step"], r[key], marker="D", markersize=4,
+                    color=_ACTION_COLOR[r["action"]], alpha=0.8, linewidth=0)
 
     # --- Action event panel (bottom) ---
     ax_ev = axes[-1]
-    event_y = {"action": 1, "warn": 0.5, "none": 0}
-    event_color = {"action": None, "warn": "#FFC107", "none": "#E0E0E0"}
 
+    # Background bars for context
     for r in records:
         ev = r["event"]
         if ev == "action":
             c = _ACTION_COLOR.get(r["action"], "#9E9E9E")
+            h = 1.2
+        elif ev == "warn":
+            c, h = "#FFC107", 0.6
         else:
-            c = event_color[ev]
-        ax_ev.bar(r["step"], event_y.get(ev, 0) + 0.4, bottom=-0.2, width=1,
-                  color=c, alpha=0.85, linewidth=0)
+            c, h = "#EEEEEE", 0.2
+        ax_ev.bar(r["step"], h, bottom=0, width=1, color=c, alpha=0.85, linewidth=0)
 
-    ax_ev.set_ylim(-0.3, 1.7)
-    ax_ev.set_yticks([0, 0.5, 1])
-    ax_ev.set_yticklabels(["none", "warn", "action"], fontsize=7)
-    ax_ev.set_ylabel("Events", fontsize=8)
+    # Label each action type in the events strip
+    prev_label_x = {a: -20 for a in _ACTION_COLOR}
+    for r in action_records:
+        a = r["action"]
+        if r["step"] - prev_label_x[a] > len(records) // 15:
+            ax_ev.text(r["step"], 1.3, _ACTION_LABEL[a], fontsize=7.5,
+                       color=_ACTION_COLOR[a], ha="center", va="bottom",
+                       fontweight="bold", rotation=45)
+            prev_label_x[a] = r["step"]
+
+    ax_ev.set_ylim(0, 2.4)
+    ax_ev.set_yticks([0.1, 0.6, 1.2])
+    ax_ev.set_yticklabels(["none", "warn", "action"], fontsize=10)
+    ax_ev.set_ylabel("Events", fontsize=11)
     ax_ev.grid(True, alpha=0.2)
 
     # X-axis ticks
     ax_ev.set_xticks(tick_xs)
-    ax_ev.set_xticklabels(tick_labels, rotation=30, ha="right", fontsize=7)
+    ax_ev.set_xticklabels(tick_labels, rotation=35, ha="right", fontsize=10)
 
     # Legend for action colours
     patches = [mpatches.Patch(color=c, label=_ACTION_LABEL[a]) for a, c in _ACTION_COLOR.items()]
     patches.append(mpatches.Patch(color="#FFC107", label="trend warning"))
     fig.legend(handles=patches, loc="lower center", ncol=len(patches),
-               fontsize=8, framealpha=0.9, bbox_to_anchor=(0.5, 0.01))
+               fontsize=11, framealpha=0.95, bbox_to_anchor=(0.5, 0.005),
+               handlelength=2, handleheight=1.2)
 
-    plt.tight_layout(rect=[0, 0.04, 1, 0.97])
+    plt.tight_layout(rect=[0, 0.05, 1, 0.98])
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
