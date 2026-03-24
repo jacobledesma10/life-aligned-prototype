@@ -7,7 +7,7 @@ class _DynamicsNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(8, 32),
+            nn.Linear(10, 32),  # 4D state + 6D one-hot action
             nn.ReLU(),
             nn.Dropout(0.1),
             nn.Linear(32, 32),
@@ -23,7 +23,7 @@ class WorldModel:
     """Learned dynamics model: f(state, action) -> next_state.
 
     State: 4D sensor vector [moisture, ph, nitrogen, temperature]
-    Action: int 0-3, one-hot encoded before concatenation
+    Action: int 0-5, one-hot encoded before concatenation (10D total input)
     """
 
     SENSOR_COLS = ["soil_moisture", "soil_ph", "nitrogen", "temperature"]
@@ -33,7 +33,7 @@ class WorldModel:
         self.trained = False
 
     def _encode(self, state: np.ndarray, action: int) -> torch.Tensor:
-        one_hot = np.zeros(4, dtype=np.float32)
+        one_hot = np.zeros(6, dtype=np.float32)
         one_hot[action] = 1.0
         x = np.concatenate([state.astype(np.float32), one_hot])
         return torch.from_numpy(x)

@@ -13,8 +13,17 @@ from feedback.feedback_loop import FeedbackLoop
 
 
 _WORLD_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "world_model.pt")
-_ACTIONS = [0, 1, 2, 3]
+_ACTIONS = [0, 1, 2, 3, 4, 5]
 _SCORE_CLOSE_THRESHOLD = 0.05
+_ACTION_RISK = {0: 0.1, 1: 0.2, 2: 0.1, 3: 0.5, 4: 0.2, 5: 0.3}
+_ACTION_LABEL = {
+    0: "no action",
+    1: "irrigate",
+    2: "rest",
+    3: "intervene",
+    4: "fertilize",
+    5: "adjust pH",
+}
 
 
 def _short_ts(ts_str):
@@ -36,11 +45,9 @@ def _gate_inputs_from_scores(scores, best_action):
     no_action_score = scores[0]
     score_range = max(abs(best_score - no_action_score), 1e-6)
 
-    necessity = float(np.clip((no_action_score - best_score) / score_range, 0.0, 1.0))
-    # Flip sign: if best_action beats no-action, necessity is high
     necessity = float(np.clip((best_score - no_action_score) / score_range, 0.0, 1.0))
     alignment = float(np.clip(best_score / (abs(best_score) + 1.0), 0.0, 1.0))
-    risk = 0.5 if best_action == 3 else 0.2
+    risk = _ACTION_RISK[best_action]
     return necessity, alignment, risk
 
 
@@ -126,22 +133,14 @@ def run_system():
                 trend_warning = True
 
         # --- Gate + output ---
+        label = _ACTION_LABEL[best_action]
         if gate.allow_action(necessity, alignment, risk):
-            print(
-                f"💧 Event: water the plant "
-                f"({ts}, soil_moisture={soil_moisture:.3f})"
-            )
+            print(f"✅ Event: {label} ({ts}, soil_moisture={soil_moisture:.3f})")
         else:
             if trend_warning:
-                print(
-                    f"🟡 Event: water may be needed soon "
-                    f"({ts}, soil_moisture={soil_moisture:.3f})"
-                )
+                print(f"🟡 Event: water may be needed soon ({ts}, soil_moisture={soil_moisture:.3f})")
             else:
-                print(
-                    f"🟢 Event: no action "
-                    f"({ts}, soil_moisture={soil_moisture:.3f})"
-                )
+                print(f"🟢 Event: no action ({ts}, soil_moisture={soil_moisture:.3f})")
 
     print("\n🧠 Loop complete.\n")
 
