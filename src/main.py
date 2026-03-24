@@ -14,6 +14,7 @@ from feedback.feedback_loop import FeedbackLoop
 
 _WORLD_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "world_model.pt")
 _ACTIONS = [0, 1, 2, 3]
+_SCORE_CLOSE_THRESHOLD = 0.05
 
 
 def _short_ts(ts_str):
@@ -53,7 +54,7 @@ def run_system():
         alignment_thresh=0.65,
         risk_thresh=0.35
     )
-    policy = RLPolicy(model_path="soil_regen_agent")
+    policy = RLPolicy(model_path="soil_regen_agent_100d")
 
     # Load pre-trained world model if available, otherwise start untrained
     world_model = WorldModel()
@@ -90,10 +91,15 @@ def run_system():
         neural_state = encoder.step(x)
         memory.update(neural_state)
         context_state = memory.get_context()
-        rl_action = policy.propose_action(context_state)  # RL prior (kept for future use)
+        rl_action = policy.propose_action(context_state)
 
         # --- World model lookahead ---
         scores, best_action = _world_model_lookahead(world_model, x)
+
+        # RL as tiebreaker: when WM scores are too close to distinguish, defer to RL
+        if abs(scores[best_action] - scores[rl_action]) < _SCORE_CLOSE_THRESHOLD:
+            best_action = rl_action
+
         necessity, alignment, risk = _gate_inputs_from_scores(scores, best_action)
 
         # Debug: world model scores
