@@ -53,3 +53,9 @@ class SoilRegenerationEnv(gym.Env):
         regen_term = nitrogen
 
         return diversity_term + resilience_term + regen_term
+
+
+def life_reward(state) -> float:
+    """Module-level life-aligned reward. state: [moisture, ph, nitrogen, temp]."""
+    moisture, ph, nitrogen, _ = state
+    return float(-abs(ph - 6.5) + -abs(moisture) + nitrogen)
