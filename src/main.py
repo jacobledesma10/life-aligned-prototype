@@ -15,6 +15,7 @@ from action.rl_policy import RLPolicy
 from action.soil_env import life_reward
 from world_model.world_model import WorldModel
 from feedback.feedback_loop import FeedbackLoop
+from rag.retriever import SoilRAGRetriever
 
 
 _WORLD_MODEL_PATH = os.path.join(os.path.dirname(__file__), "..", "models", "world_model.pt")
@@ -168,6 +169,7 @@ def run_system():
         print("No pre-trained world model found — run src/world_model/train_world_model.py first.")
 
     feedback = FeedbackLoop(world_model, update_every=50)
+    retriever = SoilRAGRetriever()
 
     print("🌱 Regenerative AI MVP — running 300 steps...")
 
@@ -208,22 +210,31 @@ def run_system():
             if sum(recent) / 3 < 0.1 and recent[-1] - recent[0] < 0:
                 trend_warning = True
 
+        rag_chunks = []
         if gate.allow_action(necessity, alignment, risk):
             event = "action"
+            state_dict = {
+                "moisture":    soil_moisture,
+                "ph":          float(row.soil_ph),
+                "nitrogen":    float(row.nitrogen),
+                "temperature": float(row.temperature),
+            }
+            rag_chunks = retriever.query(state_dict, _ACTION_LABEL[best_action], top_k=2)
         elif trend_warning:
             event = "warn"
         else:
             event = "none"
 
         records.append({
-            "step":         step_idx,
-            "ts":           ts,
+            "step":          step_idx,
+            "ts":            ts,
             "soil_moisture": soil_moisture,
-            "soil_ph":      float(row.soil_ph),
-            "nitrogen":     float(row.nitrogen),
-            "temperature":  float(row.temperature),
-            "action":       best_action,
-            "event":        event,
+            "soil_ph":       float(row.soil_ph),
+            "nitrogen":      float(row.nitrogen),
+            "temperature":   float(row.temperature),
+            "action":        best_action,
+            "event":         event,
+            "rag_chunks":    rag_chunks,
         })
 
     # Summary
@@ -240,6 +251,34 @@ def run_system():
         print(f"\n  Action breakdown:")
         for label, count in action_dist.most_common():
             print(f"    {label}: {count}")
+
+    # --- RAG: print knowledge snippets for each unique triggered action ---
+    seen_actions: set = set()
+    rag_summary: list[dict] = []
+    for r in action_steps:
+        a = r["action"]
+        if a not in seen_actions and r.get("rag_chunks"):
+            seen_actions.add(a)
+            rag_summary.append({"action": a, "chunks": r["rag_chunks"]})
+
+    if rag_summary:
+        print("\n📚 Agronomic Knowledge Retrieved (RAG):")
+        for entry in rag_summary:
+            label = _ACTION_LABEL[entry["action"]]
+            print(f"\n  ── {label.upper()} ──")
+            for i, chunk in enumerate(entry["chunks"], 1):
+                # Wrap text at ~80 chars for readability
+                words = chunk["text"].split()
+                lines, line = [], []
+                for w in words:
+                    line.append(w)
+                    if len(" ".join(line)) > 78:
+                        lines.append("     " + " ".join(line[:-1]))
+                        line = [w]
+                if line:
+                    lines.append("     " + " ".join(line))
+                print(f"  [{i}] (relevance={chunk['score']:.3f})")
+                print("\n".join(lines))
 
     _plot_results(records, _OUTPUT_PATH)
     print(f"\n📈 Graph saved → {_OUTPUT_PATH}\n")
