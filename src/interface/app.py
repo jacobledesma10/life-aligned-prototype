@@ -10,6 +10,8 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import numpy as np
+import pandas as pd
+import pydeck as pdk
 import streamlit as st
 
 from world_model.world_model import WorldModel
@@ -42,6 +44,30 @@ _ACTION_EMOJI = {
     5: "⚗️",
 }
 _SCORE_CLOSE_THRESHOLD = 0.05
+
+# ---------------------------------------------------------------------------
+# Greenhouse definitions  (simulated sensor readings per location)
+# ---------------------------------------------------------------------------
+_GREENHOUSES = {
+    "Greenhouse A": {
+        "lat": 36.7783, "lon": -119.4179,
+        "color": [33, 150, 243],   # blue
+        "sensors": {"moisture": 0.18, "ph": 5.8, "nitrogen": 0.25, "temperature": 22.0},
+        "description": "Dry & slightly acidic — irrigation likely needed",
+    },
+    "Greenhouse B": {
+        "lat": 36.7810, "lon": -119.4148,
+        "color": [76, 175, 80],    # green
+        "sensors": {"moisture": 0.36, "ph": 6.5, "nitrogen": 0.48, "temperature": 18.5},
+        "description": "Healthy baseline — all sensors within optimal range",
+    },
+    "Greenhouse C": {
+        "lat": 36.7755, "lon": -119.4200,
+        "color": [255, 152, 0],    # orange
+        "sensors": {"moisture": 0.30, "ph": 6.8, "nitrogen": 0.14, "temperature": 31.0},
+        "description": "Nitrogen deficient & heat stress — fertilize recommended",
+    },
+}
 
 # Optimal ranges for health indicators
 _OPTIMAL = {
@@ -133,53 +159,141 @@ retriever = load_retriever()
 gate     = ActionPotentialGate(necessity_thresh=0.5, alignment_thresh=-0.1, risk_thresh=0.4)
 
 # ---------------------------------------------------------------------------
-# Sidebar — sensor input
+# Sidebar — greenhouse map + sensor input
 # ---------------------------------------------------------------------------
 with st.sidebar:
-    st.header("🎛 Soil Sensor Inputs")
-    st.caption("Adjust sliders to simulate different soil conditions.")
+
+    # --- Greenhouse selector map ---
+
+    # Reduce whitespace around the map
+    st.markdown(
+        "<style>div[data-testid='stPydeckChart']{margin-top:-1rem;margin-bottom:-1rem;}</style>",
+        unsafe_allow_html=True,
+    )
+
+    gh_names = list(_GREENHOUSES.keys())
+
+    # Resolve selected greenhouse from session state
+    selected_gh = st.session_state.get("selected_gh", gh_names[0])
+
+    # Build pydeck map — highlight selected greenhouse
+    map_rows = []
+    for name, data in _GREENHOUSES.items():
+        is_selected = name == selected_gh
+        map_rows.append({
+            "lat":    data["lat"],
+            "lon":    data["lon"],
+            "name":   name,
+            "color":  data["color"] + [255],
+            "radius": 40 if is_selected else 22,
+        })
+
+    map_df = pd.DataFrame(map_rows)
+    center_lat = sum(d["lat"] for d in _GREENHOUSES.values()) / len(_GREENHOUSES)
+    center_lon = sum(d["lon"] for d in _GREENHOUSES.values()) / len(_GREENHOUSES)
+
+    scatter_layer = pdk.Layer(
+        "ScatterplotLayer",
+        id="gh-dots",
+        data=map_df,
+        get_position=["lon", "lat"],
+        get_fill_color="color",
+        get_radius="radius",
+        pickable=True,
+        auto_highlight=True,
+    )
+    text_layer = pdk.Layer(
+        "TextLayer",
+        data=map_df,
+        get_position=["lon", "lat"],
+        get_text="name",
+        get_size=13,
+        get_color=[240, 240, 240],
+        get_alignment_baseline="'bottom'",
+        get_pixel_offset=[0, -14],
+    )
+
+    deck = pdk.Deck(
+        initial_view_state=pdk.ViewState(
+            latitude=center_lat,
+            longitude=center_lon,
+            zoom=14,
+            pitch=0,
+        ),
+        layers=[scatter_layer, text_layer],
+        map_style="https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json",
+        tooltip={"text": "{name}"},
+    )
+
+    st.pydeck_chart(deck, height=230)
+
+    # Colored dot buttons — one per greenhouse
+    btn_cols = st.columns(len(gh_names))
+    for col, name in zip(btn_cols, gh_names):
+        r, g, b = _GREENHOUSES[name]["color"]
+        is_active = name == selected_gh
+        outline = f"outline: 3px solid rgb({r},{g},{b}); outline-offset: 2px;" if is_active else ""
+        col.markdown(
+            f'<div style="text-align:center; margin-bottom:4px;">'
+            f'<span style="display:inline-block; width:18px; height:18px; '
+            f'border-radius:50%; background:rgb({r},{g},{b}); {outline}"></span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        if col.button(name.replace("Greenhouse ", ""), key=f"gh_btn_{name}", use_container_width=True):
+            st.session_state["selected_gh"] = name
+            st.rerun()
+
+    gh = _GREENHOUSES[selected_gh]
+
+    # Load greenhouse sensors into session state when selection changes
+    if st.session_state.get("last_gh") != selected_gh:
+        st.session_state["gh_sensors"] = gh["sensors"].copy()
+        st.session_state["last_gh"] = selected_gh
+
+    gh_sensors = st.session_state.get("gh_sensors", gh["sensors"])
+
+    st.divider()
+    st.header("Soil Sensor Inputs")
+    st.caption("Values loaded from selected greenhouse. Adjust to explore.")
 
     moisture = st.slider(
-        "Soil Moisture", min_value=0.0, max_value=1.0, value=0.22, step=0.01,
+        "Soil Moisture", min_value=0.0, max_value=1.0,
+        value=float(gh_sensors["moisture"]), step=0.01,
         help="Volumetric water content. Optimal: 0.25–0.45"
     )
     ph = st.slider(
-        "Soil pH", min_value=4.0, max_value=9.0, value=5.8, step=0.05,
+        "Soil pH", min_value=4.0, max_value=9.0,
+        value=float(gh_sensors["ph"]), step=0.05,
         help="Optimal: 6.0–7.0"
     )
     nitrogen = st.slider(
-        "Nitrogen (g/kg)", min_value=0.0, max_value=1.0, value=0.28, step=0.01,
+        "Nitrogen (g/kg)", min_value=0.0, max_value=1.0,
+        value=float(gh_sensors["nitrogen"]), step=0.01,
         help="Available nitrogen. Optimal: 0.35–0.60 g/kg"
     )
     temperature = st.slider(
-        "Temperature (°C)", min_value=0.0, max_value=40.0, value=21.0, step=0.5,
+        "Temperature (°C)", min_value=0.0, max_value=40.0,
+        value=float(gh_sensors["temperature"]), step=0.5,
         help="Soil temperature. Optimal: 15–24°C"
     )
 
     st.divider()
-    st.caption("💡 Presets")
+    st.caption("Presets")
     col1, col2 = st.columns(2)
     if col1.button("Dry & Acidic"):
-        st.session_state["preset"] = {"moisture": 0.12, "ph": 5.2, "nitrogen": 0.20, "temperature": 22.0}
+        st.session_state["gh_sensors"] = {"moisture": 0.12, "ph": 5.2, "nitrogen": 0.20, "temperature": 22.0}
         st.rerun()
     if col2.button("Healthy Soil"):
-        st.session_state["preset"] = {"moisture": 0.35, "ph": 6.5, "nitrogen": 0.45, "temperature": 18.0}
+        st.session_state["gh_sensors"] = {"moisture": 0.35, "ph": 6.5, "nitrogen": 0.45, "temperature": 18.0}
         st.rerun()
     col3, col4 = st.columns(2)
     if col3.button("Nitrogen Low"):
-        st.session_state["preset"] = {"moisture": 0.30, "ph": 6.5, "nitrogen": 0.15, "temperature": 19.0}
+        st.session_state["gh_sensors"] = {"moisture": 0.30, "ph": 6.5, "nitrogen": 0.15, "temperature": 19.0}
         st.rerun()
     if col4.button("Heat Stress"):
-        st.session_state["preset"] = {"moisture": 0.25, "ph": 6.8, "nitrogen": 0.40, "temperature": 34.0}
+        st.session_state["gh_sensors"] = {"moisture": 0.25, "ph": 6.8, "nitrogen": 0.40, "temperature": 34.0}
         st.rerun()
-
-# Apply preset if triggered
-if "preset" in st.session_state:
-    p = st.session_state.pop("preset")
-    moisture    = p["moisture"]
-    ph          = p["ph"]
-    nitrogen    = p["nitrogen"]
-    temperature = p["temperature"]
 
 state = {"moisture": moisture, "ph": ph, "nitrogen": nitrogen, "temperature": temperature}
 
@@ -190,7 +304,7 @@ left, right = st.columns([1, 1], gap="large")
 
 # ── LEFT: Sensor Health + World Model ──────────────────────────────────────
 with left:
-    st.subheader("📊 Current Soil State")
+    st.subheader("Current Soil State")
 
     metrics = [
         ("Moisture",     moisture,    *_OPTIMAL["moisture"],    ""),
@@ -209,7 +323,7 @@ with left:
         )
 
     st.divider()
-    st.subheader("🔮 World Model Lookahead")
+    st.subheader("World Model Lookahead")
 
     result = run_inference(state, wm, gate)
     scores = result["labeled_scores"]
@@ -249,7 +363,7 @@ with left:
 
 # ── RIGHT: Query Interface ──────────────────────────────────────────────────
 with right:
-    st.subheader("💬 Query the Intelligence")
+    st.subheader("Query the Model")
 
     api_key_present = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
     if not api_key_present:
