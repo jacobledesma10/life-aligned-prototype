@@ -1,8 +1,10 @@
 """
-LLM Responder — wraps Claude API to generate natural language explanations.
+LLM Responder — natural language explanations for soil recommendations.
 
-If ANTHROPIC_API_KEY is not set, falls back to a structured demo response
-so the interface works fully without an API key.
+Priority order:
+  1. Claude API  — if ANTHROPIC_API_KEY is set
+  2. Phi-3 Mini  — local HuggingFace model (downloaded on first use, ~2.5 GB)
+  3. Demo mode   — structured text fallback, no model needed
 """
 
 from __future__ import annotations
@@ -26,6 +28,25 @@ outcomes to expect.
 Speak clearly and practically. Be concise — 3 to 5 sentences max unless the user
 asks for more detail. Ground every response in the sensor data and knowledge
 chunks provided. Never make up numbers not present in the context."""
+
+_LOCAL_MODEL = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
+# Lazy-loaded pipeline — only initialised the first time the local model is needed
+_local_pipe = None
+
+
+def _get_local_pipe():
+    global _local_pipe
+    if _local_pipe is None:
+        from transformers import pipeline
+        print("🤖 Loading TinyLlama (first run downloads ~600 MB, cached after)...")
+        _local_pipe = pipeline(
+            "text-generation",
+            model=_LOCAL_MODEL,
+            torch_dtype="auto",
+        )
+        print("   ✅ TinyLlama ready.")
+    return _local_pipe
 
 
 def build_context(state: dict, action: str, scores: dict, rag_chunks: list[dict]) -> str:
@@ -57,12 +78,12 @@ def build_context(state: dict, action: str, scores: dict, rag_chunks: list[dict]
 
 
 def _demo_response(state: dict, action: str, scores: dict, rag_chunks: list[dict]) -> str:
-    """Structured fallback used when no API key is present."""
-    best_score  = scores.get(action, 0.0)
-    no_act      = scores.get("no action", 0.0)
-    delta       = best_score - no_act
-    effect      = _ACTION_EFFECTS.get(action, "")
-    top_chunk   = rag_chunks[0]["text"][:120] + "…" if rag_chunks else ""
+    """Structured fallback used when no model is available."""
+    best_score = scores.get(action, 0.0)
+    no_act     = scores.get("no action", 0.0)
+    delta      = best_score - no_act
+    effect     = _ACTION_EFFECTS.get(action, "")
+    top_chunk  = rag_chunks[0]["text"][:120] + "…" if rag_chunks else ""
 
     lines = [
         f"**Recommended: {action.upper()}**",
@@ -91,9 +112,42 @@ def _demo_response(state: dict, action: str, scores: dict, rag_chunks: list[dict
 
     lines += [
         "",
-        "*⚠ Demo mode — connect an Anthropic API key for full natural language responses.*",
+        "*⚠ Demo mode — no LLM loaded. Set ANTHROPIC_API_KEY or allow Phi-3 to download.*",
     ]
     return "\n".join(lines)
+
+
+def _local_response(
+    context: str,
+    user_query: str,
+) -> str:
+    """Generate a response using local TinyLlama."""
+    task = (
+        user_query.strip()
+        if user_query.strip()
+        else (
+            "Explain the current soil state, why the recommended action was chosen, "
+            "and what outcome to expect. Be practical and concise (3–5 sentences)."
+        )
+    )
+
+    # TinyLlama chat template format
+    prompt = (
+        f"<|system|>\n{_SYSTEM_PROMPT}\n</s>\n"
+        f"<|user|>\n{context}\n\n{task}\n</s>\n"
+        f"<|assistant|>\n"
+    )
+
+    pipe = _get_local_pipe()
+    result = pipe(
+        prompt,
+        max_new_tokens=300,
+        do_sample=True,
+        temperature=0.7,
+        repetition_penalty=1.1,
+        return_full_text=False,
+    )
+    return result[0]["generated_text"].strip()
 
 
 def generate_response(
@@ -102,43 +156,48 @@ def generate_response(
     scores: dict,
     rag_chunks: list[dict],
     user_query: str = "",
+    use_local_llm: bool = True,
 ) -> str:
     """
     Generate a natural language explanation.
 
-    Uses Claude API if ANTHROPIC_API_KEY is set, otherwise returns a
-    structured demo response.
+    Priority:
+      1. Claude API  (if ANTHROPIC_API_KEY is set)
+      2. Phi-3 Mini  (if use_local_llm=True)
+      3. Demo mode   (structured fallback)
     """
+    context = build_context(state, action, scores, rag_chunks)
     api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
-    context = build_context(state, action, scores, rag_chunks)
-
-    if not api_key:
-        return _demo_response(state, action, scores, rag_chunks)
-
-    try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-
-        user_content = context
-        if user_query.strip():
-            user_content += f"\n\n## User Question\n{user_query.strip()}"
-        else:
-            user_content += (
-                "\n\n## Task\nExplain the current soil state, why the recommended action "
-                "was chosen, and what outcome to expect. Be practical and concise."
+    # --- 1. Claude API ---
+    if api_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            user_content = context
+            if user_query.strip():
+                user_content += f"\n\n## User Question\n{user_query.strip()}"
+            else:
+                user_content += (
+                    "\n\n## Task\nExplain the current soil state, why the recommended action "
+                    "was chosen, and what outcome to expect. Be practical and concise."
+                )
+            message = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=400,
+                system=_SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_content}],
             )
+            return message.content[0].text
+        except Exception as exc:
+            return f"⚠ Claude API error: {exc}\n\n" + _demo_response(state, action, scores, rag_chunks)
 
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=400,
-            system=_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
-        )
-        return message.content[0].text
+    # --- 2. TinyLlama (local) ---
+    if use_local_llm:
+        try:
+            return _local_response(context, user_query)
+        except Exception as exc:
+            return f"⚠ Local model error: {exc}\n\n" + _demo_response(state, action, scores, rag_chunks)
 
-    except Exception as exc:
-        return (
-            f"⚠ API call failed: {exc}\n\n"
-            + _demo_response(state, action, scores, rag_chunks)
-        )
+    # --- 3. Demo fallback ---
+    return _demo_response(state, action, scores, rag_chunks)
