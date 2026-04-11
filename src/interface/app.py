@@ -366,12 +366,19 @@ with right:
     st.subheader("Query the Model")
 
     api_key_present = bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
-    if not api_key_present:
-        st.warning(
-            "⚠ No `ANTHROPIC_API_KEY` detected — running in **demo mode**. "
-            "Responses are structured but not LLM-generated.",
-            icon="🔑",
-        )
+
+    # Model status badge
+    if api_key_present:
+        st.success("Claude API active", icon="✅")
+        use_local = False
+    else:
+        use_local = st.toggle("Use TinyLlama (local)", value=True,
+                              help="Downloads ~600 MB on first use then runs offline. "
+                                   "Disable for structured demo mode.")
+        if use_local:
+            st.info("TinyLlama (local) — first run downloads ~600 MB, cached after.", icon="🤖")
+        else:
+            st.warning("Demo mode — structured response, no LLM.", icon="📋")
 
     user_query = st.text_area(
         "Ask a question (optional — leave blank for automatic analysis)",
@@ -386,23 +393,24 @@ with right:
     analyze_btn = st.button("🔍 Analyze", type="primary", use_container_width=True)
 
     if analyze_btn or "last_response" not in st.session_state:
-        # Retrieve RAG chunks
         rag_chunks = retriever.query(state, best_label, top_k=2)
 
-        response = generate_response(
-            state=state,
-            action=best_label,
-            scores=scores,
-            rag_chunks=rag_chunks,
-            user_query=user_query,
-        )
+        with st.spinner("Generating response…"):
+            response = generate_response(
+                state=state,
+                action=best_label,
+                scores=scores,
+                rag_chunks=rag_chunks,
+                user_query=user_query,
+                use_local_llm=use_local,
+            )
 
         st.session_state["last_response"]   = response
         st.session_state["last_rag_chunks"] = rag_chunks
         st.session_state["last_action"]     = best_label
 
     # Display response
-    st.markdown("#### 🤖 Response")
+    st.markdown("#### Response")
     st.markdown(st.session_state.get("last_response", ""))
 
     # RAG sources
